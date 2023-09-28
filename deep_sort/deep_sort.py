@@ -1,9 +1,8 @@
 import numpy as np
 import torch
 
-from .deep.feature_extractor import Extractor, FastReIDExtractor
+from .deep.feature_extractor import Extractor
 from .sort.nn_matching import NearestNeighborDistanceMetric
-from .sort.preprocessing import non_max_suppression
 from .sort.detection import Detection
 from .sort.tracker import Tracker
 
@@ -12,31 +11,28 @@ __all__ = ['DeepSort']
 
 
 class DeepSort(object):
-    def __init__(self, model_path, model_config=None, max_dist=0.2, min_confidence=0.3, nms_max_overlap=1.0, max_iou_distance=0.7, max_age=70, n_init=3, nn_budget=100, use_cuda=True):
+    def __init__(self, model_path, max_dist=0.2, min_confidence=0.3, nms_max_overlap=1.0, max_iou_distance=0.7, max_age=70, n_init=3, nn_budget=100, use_cuda=True):
         self.min_confidence = min_confidence
         self.nms_max_overlap = nms_max_overlap
 
-        if model_config is None:
-            self.extractor = Extractor(model_path, use_cuda=use_cuda)
-        else:
-            self.extractor = FastReIDExtractor(model_config, model_path, use_cuda=use_cuda)
+        self.extractor = Extractor(model_path, use_cuda=use_cuda)
 
         max_cosine_distance = max_dist
-        metric = NearestNeighborDistanceMetric("cosine", max_cosine_distance, nn_budget)
-        self.tracker = Tracker(metric, max_iou_distance=max_iou_distance, max_age=max_age, n_init=n_init)
+        metric = NearestNeighborDistanceMetric(
+            "cosine", max_cosine_distance, nn_budget)
+        self.tracker = Tracker(
+            metric, max_iou_distance=max_iou_distance, max_age=max_age, n_init=n_init)
 
-    def update(self, bbox_xywh, confidences, ori_img):
+    def update(self, bbox_xywh, confidences, oids, ori_img):
         self.height, self.width = ori_img.shape[:2]
         # generate detections
         features = self._get_features(bbox_xywh, ori_img)
         bbox_tlwh = self._xywh_to_tlwh(bbox_xywh)
-        detections = [Detection(bbox_tlwh[i], conf, features[i]) for i,conf in enumerate(confidences) if conf>self.min_confidence]
+        detections = [Detection(bbox_tlwh[i], conf, features[i],oid) for i, (conf,oid) in enumerate(zip(confidences,oids)) if conf > self.min_confidence]
 
         # run on non-maximum supression
         boxes = np.array([d.tlwh for d in detections])
         scores = np.array([d.confidence for d in detections])
-        indices = non_max_suppression(boxes, self.nms_max_overlap, scores)
-        detections = [detections[i] for i in indices]
 
         # update tracker
         self.tracker.predict()
@@ -50,11 +46,11 @@ class DeepSort(object):
             box = track.to_tlwh()
             x1,y1,x2,y2 = self._tlwh_to_xyxy(box)
             track_id = track.track_id
-            outputs.append(np.array([x1,y1,x2,y2,track_id], dtype=np.int))
+            track_oid = track.oid
+            outputs.append(np.array([x1, y1, x2, y2, track_id, track_oid], dtype=np.int32))
         if len(outputs) > 0:
             outputs = np.stack(outputs,axis=0)
         return outputs
-
 
     """
     TODO:
@@ -70,7 +66,6 @@ class DeepSort(object):
         bbox_tlwh[:,0] = bbox_xywh[:,0] - bbox_xywh[:,2]/2.
         bbox_tlwh[:,1] = bbox_xywh[:,1] - bbox_xywh[:,3]/2.
         return bbox_tlwh
-
 
     def _xywh_to_xyxy(self, bbox_xywh):
         x,y,w,h = bbox_xywh
