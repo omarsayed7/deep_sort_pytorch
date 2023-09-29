@@ -47,6 +47,10 @@ class Tracker:
         self.tracks = []
         self._next_id = 1
 
+    def increment_age(self):
+        for track in self.tracks:
+            track.increment_age()
+    
     def predict(self):
         """Propagate track state distributions one time step forward.
 

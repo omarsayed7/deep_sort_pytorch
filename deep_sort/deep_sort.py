@@ -24,33 +24,36 @@ class DeepSort(object):
             metric, max_iou_distance=max_iou_distance, max_age=max_age, n_init=n_init)
 
     def update(self, bbox_xywh, confidences, oids, ori_img):
-        self.height, self.width = ori_img.shape[:2]
-        # generate detections
-        features = self._get_features(bbox_xywh, ori_img)
-        bbox_tlwh = self._xywh_to_tlwh(bbox_xywh)
-        detections = [Detection(bbox_tlwh[i], conf, features[i],oid) for i, (conf,oid) in enumerate(zip(confidences,oids)) if conf > self.min_confidence]
+        if bbox_xywh is None:
+            detections = None
+            self.tracker.increment_age()
+        else:
+            self.height, self.width = ori_img.shape[:2]
+            # generate detections
+            features = self._get_features(bbox_xywh, ori_img)
+            bbox_tlwh = self._xywh_to_tlwh(bbox_xywh)
+            detections = [Detection(bbox_tlwh[i], conf, features[i],oid) for i, (conf,oid) in enumerate(zip(confidences,oids)) if conf > self.min_confidence]
+            # run on non-maximum supression
+            boxes = np.array([d.tlwh for d in detections])
+            scores = np.array([d.confidence for d in detections])
 
-        # run on non-maximum supression
-        boxes = np.array([d.tlwh for d in detections])
-        scores = np.array([d.confidence for d in detections])
+            # update tracker
+            self.tracker.predict()
+            self.tracker.update(detections)
 
-        # update tracker
-        self.tracker.predict()
-        self.tracker.update(detections)
-
-        # output bbox identities
-        outputs = []
-        for track in self.tracker.tracks:
-            if not track.is_confirmed() or track.time_since_update > 1:
-                continue
-            box = track.to_tlwh()
-            x1,y1,x2,y2 = self._tlwh_to_xyxy(box)
-            track_id = track.track_id
-            track_oid = track.oid
-            outputs.append(np.array([x1, y1, x2, y2, track_id, track_oid], dtype=np.int32))
-        if len(outputs) > 0:
-            outputs = np.stack(outputs,axis=0)
-        return outputs
+            # output bbox identities
+            outputs = []
+            for track in self.tracker.tracks:
+                if not track.is_confirmed() or track.time_since_update > 1:
+                    continue
+                box = track.to_tlwh()
+                x1,y1,x2,y2 = self._tlwh_to_xyxy(box)
+                track_id = track.track_id
+                track_oid = track.oid
+                outputs.append(np.array([x1, y1, x2, y2, track_id, track_oid], dtype=np.int32))
+            if len(outputs) > 0:
+                outputs = np.stack(outputs,axis=0)
+            return outputs
 
     """
     TODO:
